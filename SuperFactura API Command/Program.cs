@@ -6,6 +6,7 @@
  */
 
 using System;
+using System.IO;
 using SuperFactura;
 using Newtonsoft.Json;
 
@@ -17,6 +18,33 @@ namespace SuperFactura_API_Command
 		{
 			// TODO: Add SF_API_PLATFORM = '-dos-net';
 
+			dynamic options = null;
+
+			string path = Directory.GetCurrentDirectory() + "/sf-config.json";
+			bool usingConfigJSON = false;
+			if (File.Exists(path))
+			{
+				usingConfigJSON = true;
+
+				string fileData = File.ReadAllText(path, System.Text.Encoding.Default);
+				dynamic data = JsonConvert.DeserializeObject(fileData);
+
+				if (data.usuario != null) { args[0] = data.usuario; }
+				else { Console.WriteLine("Error al leer los campos del JSON: 'usuario' "); Environment.Exit(1); }
+
+				if (data.contrasena != null) { args[1] = data.contrasena; }
+				else { Console.WriteLine("Error al leer los campos del JSON: 'contrasena' "); Environment.Exit(1); }
+
+				if (data.ambiente != null) { args[2] = data.ambiente; }
+				else { Console.WriteLine("Error al leer los campos del JSON: 'ambiente' "); Environment.Exit(1); }
+
+				//if (data.archivo != null && data.archivo != "") { args[3] = data.archivo; }
+				//else { Console.WriteLine("Error al leer los campos del JSON: 'archivo' "); Environment.Exit(1); }
+
+				if (data.opciones != null) { options = data.opciones; }
+				else { Console.WriteLine("Error al leer los campos del JSON: 'opciones' "); Environment.Exit(1); }
+			}
+			
 			if (args.Length < 3)
 			{
 				// Console.Error.WriteLine(@"
@@ -46,8 +74,8 @@ Envíe sus consultas a: soporte@superfactura.cl
 			if (args.Length >= 5) optionsJSON = args[4];
 
 			API api;
-			dynamic options = null;
-			if (optionsJSON != null)
+
+			if (optionsJSON != null && !usingConfigJSON)
 			{
 				options = JsonConvert.DeserializeObject(optionsJSON);
 			}
@@ -56,7 +84,8 @@ Envíe sus consultas a: soporte@superfactura.cl
 			{
 				// Conexión a un servidor local
 				api = new API((string)options.url, user, pass);
-			} else
+			}
+			else
 			{
 				// Conexión a la nube de SuperFactura
 				api = new API(user, pass);
@@ -65,7 +94,8 @@ Envíe sus consultas a: soporte@superfactura.cl
 			string printer = null;
 			string saveHTML = null;
 
-			if (options != null) {
+			if (options != null)
+			{
 				if (options.savePDF != null)
 				{
 					api.SetSavePDF((string)options.savePDF);
@@ -83,7 +113,7 @@ Envíe sus consultas a: soporte@superfactura.cl
 				}
 
 				saveHTML = GetAndRemove(options, "saveHTML");
-				if(saveHTML != null)
+				if (saveHTML != null)
 				{
 					options["getHTML"] = 1;
 				}
@@ -96,7 +126,7 @@ Envíe sus consultas a: soporte@superfactura.cl
 			}
 
 			// string json = System.IO.File.ReadAllText(dteFile, System.Text.Encoding.GetEncoding("ISO-8859-1"));
-			string json = System.IO.File.ReadAllText(dteFile, System.Text.Encoding.Default);
+			string json = File.ReadAllText(dteFile, System.Text.Encoding.Default);
 
 			try
 			{
@@ -105,7 +135,7 @@ Envíe sus consultas a: soporte@superfactura.cl
 				// {"ok":true,"folio":"125"}
 				Console.WriteLine("{\"ok\":" + (res.ok ? "true" : "false") + ",\"folio\":\"" + res.folio + "\"}");
 
-				if(printer != null) res.PrintEscPos(printer);
+				if (printer != null) res.PrintEscPos(printer);
 
 				if (saveHTML != null)
 				{
