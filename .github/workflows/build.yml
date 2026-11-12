@@ -1,0 +1,88 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      SOLUTION: SuperFacturaAPI.sln
+      CONFIGURATION: Release
+      LIB_DIR: SuperFacturaAPI/bin/Release
+      CLI_DIR: SuperFactura API Command/bin/Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - uses: NuGet/setup-nuget@v2
+
+      # The projects target .NET Framework 4.0 and 4.5.2, whose targeting packs
+      # are not installed on current runner images. Pull the reference
+      # assemblies from NuGet and point MSBuild at them.
+      - name: Fetch .NET Framework reference assemblies
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'refasm'
+          foreach ($tfm in 'net40', 'net452') {
+            nuget install "Microsoft.NETFramework.ReferenceAssemblies.$tfm" -Version 1.0.3 -OutputDirectory $root -ExcludeVersion -NonInteractive
+          }
+          $frameworks = Join-Path $root 'frameworks'
+          New-Item -ItemType Directory -Force (Join-Path $frameworks '.NETFramework') | Out-Null
+          Get-ChildItem $root -Directory -Filter 'Microsoft.NETFramework.ReferenceAssemblies.*' | ForEach-Object {
+            Copy-Item (Join-Path $_.FullName 'build\.NETFramework\*') (Join-Path $frameworks '.NETFramework') -Recurse -Force
+          }
+          "REFASM_ROOT=$frameworks\" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Restore NuGet packages
+        run: nuget restore "${{ env.SOLUTION }}"
+
+      - name: Build
+        run: >
+          msbuild "${{ env.SOLUTION }}"
+          /p:Configuration=${{ env.CONFIGURATION }}
+          "/p:TargetFrameworkRootPath=${{ env.REFASM_ROOT }}"
+          /m /nologo /v:minimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SuperFacturaAPI-${{ env.CONFIGURATION }}
+          path: ${{ env.LIB_DIR }}/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: superfactura-cli-${{ env.CONFIGURATION }}
+          path: |
+            ${{ env.CLI_DIR }}/superfactura.exe
+            ${{ env.CLI_DIR }}/superfactura.exe.config
+            ${{ env.CLI_DIR }}/*.dll
+          if-no-files-found: error
+
+      # Every push to master publishes a GitHub Release with the library and
+      # the command-line tool.
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v1.0.${{ github.run_number }}
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'release'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $lib = Join-Path $out "SuperFacturaAPI-$env:TAG.zip"
+          $cli = Join-Path $out "superfactura-cli-$env:TAG.zip"
+          Compress-Archive -Path (Join-Path $env:LIB_DIR '*.dll') -DestinationPath $lib
+          Compress-Archive -Path (Join-Path $env:CLI_DIR 'superfactura.exe'), (Join-Path $env:CLI_DIR 'superfactura.exe.config'), (Join-Path $env:CLI_DIR '*.dll') -DestinationPath $cli
+          gh release create $env:TAG $cli $lib `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "SuperFactura API $env:TAG" `
+            --generate-notes
