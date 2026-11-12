@@ -1,0 +1,54 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      SOLUTION: SuperFacturaAPI.sln
+      CONFIGURATION: Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - uses: NuGet/setup-nuget@v2
+
+      # The projects target .NET Framework 4.0 and 4.5.2, whose targeting packs
+      # are not installed on current runner images. Pull the reference
+      # assemblies from NuGet and point MSBuild at them.
+      - name: Fetch .NET Framework reference assemblies
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'refasm'
+          foreach ($tfm in 'net40', 'net452') {
+            nuget install "Microsoft.NETFramework.ReferenceAssemblies.$tfm" -Version 1.0.3 -OutputDirectory $root -ExcludeVersion -NonInteractive
+          }
+          $frameworks = Join-Path $root 'frameworks'
+          New-Item -ItemType Directory -Force (Join-Path $frameworks '.NETFramework') | Out-Null
+          Get-ChildItem $root -Directory -Filter 'Microsoft.NETFramework.ReferenceAssemblies.*' | ForEach-Object {
+            Copy-Item (Join-Path $_.FullName 'build\.NETFramework\*') (Join-Path $frameworks '.NETFramework') -Recurse -Force
+          }
+          "REFASM_ROOT=$frameworks\" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Restore NuGet packages
+        run: nuget restore "${{ env.SOLUTION }}"
+
+      - name: Build
+        run: >
+          msbuild "${{ env.SOLUTION }}"
+          /p:Configuration=${{ env.CONFIGURATION }}
+          "/p:TargetFrameworkRootPath=${{ env.REFASM_ROOT }}"
+          /m /nologo /v:minimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SuperFacturaAPI-${{ env.CONFIGURATION }}
+          path: SuperFacturaAPI/bin/${{ env.CONFIGURATION }}/
+          if-no-files-found: error
